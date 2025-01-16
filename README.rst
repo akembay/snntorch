@@ -1,4 +1,11 @@
 ================
+Main Update
+================
+
+This snntorch version has additional neuron types. 
+
+
+================
 Introduction
 ================
 
