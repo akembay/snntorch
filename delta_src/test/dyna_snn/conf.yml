@@ -1,0 +1,15 @@
+train:
+  a: 1
+
+model:
+  in-size: 32
+  hiddens: [48,48,48]
+  out-size: 2
+  dropout: 0.2
+
+  dt: 0.001 #s
+  init-tau: 0.05 # Ensure that dt/tau does not exceed 1
+  v-threshold: 1.0
+  v-rest: 0.0
+  reset-mechanism: zero
+  spike-grad: fast-sigmoid

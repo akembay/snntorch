@@ -1,0 +1,19 @@
+train:
+  epoch: 20
+  batch: 128
+  lr: 0.001
+  num_workers: 4
+  save_interval: 5
+  iter: -1
+  schedule-step: 0
+  schedule-rate: 0.1
+  time-window: 100
+
+model:
+  type: "snn"
+  in_features: 784
+  hidden_size: 1000
+  out_features: 2
+  beta1: 0.95
+  beta2: 0.95
+  num_steps: 10
