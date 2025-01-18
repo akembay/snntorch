@@ -27,7 +27,7 @@ def set_seed(seed):
     
     
 from delta_src.utils import load_yaml, save_dict2json
-from delta_src.model import LeakySNNMNIST
+from delta_src.model import LeakySNNMNIST, DeltaSNN
 
 def split_mnist(train_x, train_y, test_x, test_y, n_splits=5):
     """ Given the training set, split the tensors by the class label. """
@@ -262,8 +262,17 @@ def main():
     #save_interval=train_conf["save_interval"]
     #minibatch=train_conf["batch"]
     
-    model = LeakySNNMNIST(model_conf).to(device)
-    criterion = SF.ce_rate_loss()
+    #>> Preparing the model >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    if model_conf["type"]=="snn".casefold():
+        model=LeakySNNMNIST(model_conf).to(device)
+        criterion=SF.ce_rate_loss() 
+    elif model_conf["type"]=="deltasnn".casefold():
+        model = DeltaSNN(model_conf).to(device)
+        criterion = SF.ce_rate_loss()
+    else:
+        raise ValueError(f"model type {model_conf['type']} is not supportated...")
+    print(model)
+    
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     
     # Training on all tasks sequentially

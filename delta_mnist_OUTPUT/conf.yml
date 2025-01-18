@@ -10,7 +10,7 @@ train:
   time-window: 100
 
 model:
-  type: "snn"
+  type: "deltasnn"
   in_features: 784
   hidden_size: 1000
   out_features: 2

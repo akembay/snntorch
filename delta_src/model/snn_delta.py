@@ -429,6 +429,46 @@ class ResCSNN(SNN):
 
 
 #===================================  DeltaNET
+#MNIST models 
+
+# normal net SNN
+class LeakySNNMNIST(nn.Module):
+    def __init__(self, model_conf):
+        super().__init__()
+        
+        # Extract configurations
+        self.num_inputs = model_conf["in_features"]
+        self.num_hidden = model_conf["hidden_size"]
+        self.num_outputs = model_conf["out_features"]
+        self.beta1 = model_conf.get("beta1", 0.9)  # Default to 0.9 if not specified
+        self.beta2 = model_conf.get("beta2", 0.9)  # Default to 0.9 if not specified
+        self.num_steps = model_conf.get("num_steps", 10)  # Default to 10 if not specified
+        
+        # Initialize layers
+        self.fc1 = nn.Linear(self.num_inputs, self.num_hidden, bias=False)
+        self.lif1 = snn.Leaky(beta=self.beta1)  # Fixed decay rate
+        self.fc2 = nn.Linear(self.num_hidden, self.num_outputs, bias=False)
+        self.lif2 = snn.Leaky(beta=self.beta2, learn_beta=True)  # Learnable decay rate
+    
+    def forward(self, x):
+        # Initialize hidden states
+        mem1 = self.lif1.init_leaky()
+        mem2 = self.lif2.init_leaky()
+        spk2_rec = []
+        
+        # Temporal processing
+        for step in range(self.num_steps):
+            cur1 = self.fc1(x.flatten(1))
+            spk1, mem1 = self.lif1(cur1, mem1)
+            cur2 = self.fc2(spk1)
+            spk2, mem2 = self.lif2(cur2, mem2)
+            spk2_rec.append(spk2)
+        
+        # Return accumulated spike output
+        return torch.stack(spk2_rec).mean(0)
+    
+#===================================
+#DeltaSNN 
 class DeltaSNN(nn.Module):
     """
     SNN implementation using Delta_Leaky neurons instead of LIF
@@ -538,8 +578,11 @@ class DeltaSNN(nn.Module):
         """Clips gradients to prevent exploding gradients"""
         torch.nn.utils.clip_grad_norm_(self.parameters(), self.clip_norm)
 
+      
+        
 
-
+    
+ 
 class DeltaCSNN(DeltaSNN):
     """
     Convolutional version of DeltaSNN
@@ -607,41 +650,3 @@ class DeltaCSNN(DeltaSNN):
         
         self.model = nn.Sequential(*modules)
         
-        
-        
-class LeakySNNMNIST(nn.Module):
-    def __init__(self, model_conf):
-        super().__init__()
-        
-        # Extract configurations
-        self.num_inputs = model_conf["in_features"]
-        self.num_hidden = model_conf["hidden_size"]
-        self.num_outputs = model_conf["out_features"]
-        self.beta1 = model_conf.get("beta1", 0.9)  # Default to 0.9 if not specified
-        self.beta2 = model_conf.get("beta2", 0.9)  # Default to 0.9 if not specified
-        self.num_steps = model_conf.get("num_steps", 10)  # Default to 10 if not specified
-        
-        # Initialize layers
-        self.fc1 = nn.Linear(self.num_inputs, self.num_hidden, bias=False)
-        self.lif1 = snn.Leaky(beta=self.beta1)  # Fixed decay rate
-        self.fc2 = nn.Linear(self.num_hidden, self.num_outputs, bias=False)
-        self.lif2 = snn.Leaky(beta=self.beta2, learn_beta=True)  # Learnable decay rate
-    
-    def forward(self, x):
-        # Initialize hidden states
-        mem1 = self.lif1.init_leaky()
-        mem2 = self.lif2.init_leaky()
-        spk2_rec = []
-        
-        # Temporal processing
-        for step in range(self.num_steps):
-            cur1 = self.fc1(x.flatten(1))
-            spk1, mem1 = self.lif1(cur1, mem1)
-            cur2 = self.fc2(spk1)
-            spk2, mem2 = self.lif2(cur2, mem2)
-            spk2_rec.append(spk2)
-        
-        # Return accumulated spike output
-        return torch.stack(spk2_rec).mean(0)
-    
- 
