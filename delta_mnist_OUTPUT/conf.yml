@@ -1,5 +1,5 @@
 train:
-  epoch: 20
+  epoch: 10
   batch: 128
   lr: 0.001
   num_workers: 4
@@ -10,7 +10,7 @@ train:
   time-window: 100
 
 model:
-  type: "snn"
+  type: "deltasnn"
   in_features: 784
   hidden_size: 300
   out_features: 2

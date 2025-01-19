@@ -329,7 +329,21 @@ def main():
         
         # Plot current progress
         plot_accuracy_per_task(all_results, resultpath)
-    
+        
+        if task_id == 4:  # On the final task
+            final_epoch_results = task_results[-1]  # Get the last epoch's results
+            formatted_results = {
+                "model": model_conf["type"],
+                "epoch": f"{epoch}",
+                "accuracies": {
+                    f"Task {i+1}": f"{acc:.4f} ± {std:.4f}" 
+                    for i, (acc, std) in enumerate(zip(
+                        final_epoch_results['task_accuracies'],
+                        final_epoch_results['task_stds']
+                    ))
+                }
+            }
+            save_dict2json(formatted_results, resultpath / 'final_accuracies.json')
     print("\nTraining completed!")
 
 
