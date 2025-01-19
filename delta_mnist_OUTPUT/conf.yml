@@ -10,10 +10,17 @@ train:
   time-window: 100
 
 model:
-  type: "deltasnn"
+  type: "snn"
   in_features: 784
-  hidden_size: 1000
+  hidden_size: 300
   out_features: 2
   beta1: 0.95
   beta2: 0.95
   num_steps: 10
+  dropout: 0.1
+  output-membrane: false
+  spike-grad: atan
+
+  delta-threshold: 0.01
+  learnable-threshold: true
+  learnable_delta_threshold: true 

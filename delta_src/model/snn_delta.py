@@ -432,7 +432,7 @@ class ResCSNN(SNN):
 #MNIST models 
 
 # normal net SNN
-class LeakySNNMNIST(nn.Module):
+class NormalSNN(nn.Module):
     def __init__(self, model_conf):
         super().__init__()
         
@@ -466,187 +466,70 @@ class LeakySNNMNIST(nn.Module):
         
         # Return accumulated spike output
         return torch.stack(spk2_rec).mean(0)
-    
-#===================================
-#DeltaSNN 
-class DeltaSNN(nn.Module):
-    """
-    SNN implementation using Delta_Leaky neurons instead of LIF
-    """
-    def __init__(self, conf: dict):
-        super(DeltaSNN, self).__init__()
+            
         
-        self.in_size = conf["in-size"]
-        self.hiddens = conf["hiddens"]
-        self.out_size = conf["out-size"]  # Using num_classes from config
-        self.clip_norm = conf["clip-norm"] if "clip-norm" in conf.keys() else 1.0
-        self.dropout = conf["dropout"]
-        self.output_mem = conf["output-membrane"]
+class DeltaSNN(nn.Module):
+    def __init__(self, model_conf):
+        super().__init__()
+        
+        # Extract configurations
+        self.num_inputs = model_conf["in_features"]
+        self.num_hidden = model_conf["hidden_size"][0] if isinstance(model_conf["hidden_size"], (list, tuple)) else model_conf["hidden_size"]
+        self.num_outputs = model_conf["out_features"]
+        self.beta1 = model_conf.get("beta1")
+        self.beta2 = model_conf.get("beta2")
+        self.num_steps = model_conf.get("num_steps", model_conf["num_steps"])
         
         # Delta-specific parameters
-        self.beta = conf["beta"] if "beta" in conf.keys() else 0.9
-        self.delta_threshold = conf["delta-threshold"] #if "delta-threshold" in conf.keys() else 0.02
-        self.learn_threshold = conf["learnable-threshold"] #if "learnable-threshold" in conf.keys() else True # False
-        self.learnable_delta_threshold=conf["learnable_delta_threshold"]
+        self.delta_threshold = model_conf.get("delta-threshold")
+        self.learnable_delta_threshold = model_conf.get("learnable-threshold")
+        self.clip_norm = model_conf.get("clip-norm", 1.0)
         
-        if "fast" in conf["spike-grad"].casefold() and "sigmoid" in conf["spike-grad"].casefold():
+        # Spike gradient function
+        if "fast" in model_conf.get("spike-grad", "").casefold() and "sigmoid" in model_conf.get("spike-grad", "").casefold():
             self.spike_grad = surrogate.fast_sigmoid()
         else:
             self.spike_grad = surrogate.atan()
-            
-        if self.learnable_delta_threshold:
-            delta_threshold = torch.Tensor([self.delta_threshold])
-            self.delta_threshold = nn.Parameter(delta_threshold)
-
-            
-        modules = []
-        is_bias = True
         
-        # Input Layer
-        modules += [
-            nn.Linear(self.in_size, self.hiddens[0], bias=is_bias),
-            snn.Delta_Leaky(
-                beta=self.beta,
-                spike_grad=self.spike_grad,
-                init_hidden=True,
-                delta_threshold=self.delta_threshold,
-                learnable_delta_threshold=self.learnable_delta_threshold
-            ),
-            nn.Dropout(self.dropout),
-        ]
+        # Initialize layers with Delta_Leaky neurons
+        self.fc1 = nn.Linear(self.num_inputs, self.num_hidden, bias=True)
+        self.lif1 = snn.Delta_Leaky(
+            beta=self.beta1,
+            spike_grad=self.spike_grad,
+            init_hidden=True,
+            delta_threshold=self.delta_threshold,
+            learnable_delta_threshold=self.learnable_delta_threshold
+        )
         
-        # Hidden Layers
-        prev_hidden = self.hiddens[0]
-        for hidden in self.hiddens[1:]:
-            modules += [
-                nn.Linear(prev_hidden, hidden, bias=is_bias),
-                snn.Delta_Leaky(
-                    beta=self.beta,
-                    spike_grad=self.spike_grad,
-                    init_hidden=True,
-                    delta_threshold=self.delta_threshold,
-                    learnable_delta_threshold=self.learnable_delta_threshold
-                ),
-                nn.Dropout(self.dropout),
-            ]
-            prev_hidden = hidden
-            
-        # Output Layer
-        modules += [
-            nn.Linear(self.hiddens[-1], self.out_size, bias=is_bias),
-            snn.Delta_Leaky(
-                beta=self.beta,
-                spike_grad=self.spike_grad,
-                init_hidden=True,
-                output=True,
-                delta_threshold=self.delta_threshold,
-                learnable_delta_threshold=self.learnable_delta_threshold
-            ),
-        ]
-        
-        self.model = nn.Sequential(*modules)
+        self.fc2 = nn.Linear(self.num_hidden, self.num_outputs, bias=True)
+        self.lif2 = snn.Delta_Leaky(
+            beta=self.beta2,
+            spike_grad=self.spike_grad,
+            init_hidden=True,
+            delta_threshold=self.delta_threshold,
+            learnable_delta_threshold=self.learnable_delta_threshold
+        )
     
-    def forward(self, s: torch.Tensor):
-        """
-        Forward pass through the network
+    def forward(self, x):
+        spk2_rec = []
+        batch_size = x.shape[1]
         
-        Args:
-            s: Spike train [T x batch x ...]
-            
-        Returns:
-            out_s: Output spikes [T x batch x ...]
-            out_v: Output membrane potentials [T x batch x ...] (if output_mem=True)
-        """
-        T = s.shape[0]
-        utils.reset(self.model)  # Reset all neuron states using utils.reset
+        # Reset neuron states
+        self.lif1.reset_hidden()
+        self.lif2.reset_hidden()
         
-        out_s, out_v = [], []
-        for st in s:
-            spk_out, mem_out = self.model(st)
-            out_s.append(spk_out)
-            out_v.append(mem_out)
-            
-        out_s = torch.stack(out_s, dim=0)
-        out_v = torch.stack(out_v, dim=0)
+        # Temporal processing
+        for step in range(self.num_steps):
+            cur1 = self.fc1(x[step])
+            spk1 = self.lif1(cur1)  # Delta_Leaky manages its own hidden state
+            cur2 = self.fc2(spk1)
+            spk2 = self.lif2(cur2)  # Delta_Leaky manages its own hidden state
+            spk2_rec.append(spk2)
         
-        if self.output_mem:
-            return out_s, [], out_v
-        else:
-            return out_s
-            
+        # Return accumulated spike output
+        return torch.stack(spk2_rec).mean(0)
+    
     def clip_gradients(self):
         """Clips gradients to prevent exploding gradients"""
         torch.nn.utils.clip_grad_norm_(self.parameters(), self.clip_norm)
-
-      
-        
-
-    
- 
-class DeltaCSNN(DeltaSNN):
-    """
-    Convolutional version of DeltaSNN
-    """
-    def __init__(self, conf):
-        super(DeltaCSNN, self).__init__(conf)
-        
-        self.in_size = conf["in-size"]
-        self.in_channel = conf["in-channel"]
-        self.out_size = conf["out_size"]
-        self.hiddens = conf["hiddens"]
-        self.pool_type = conf["pool-type"]
-        self.pool_size = conf["pool-size"]
-        self.is_bn = conf["is-bn"]
-        self.linear_hidden = conf["linear-hidden"]
-        
-        modules = []
-        
-        # Convolutional Layers
-        in_c = self.in_channel
-        in_size = self.in_size
-        for i, hidden_c in enumerate(self.hiddens):
-            modules += [
-                nn.Conv2d(in_c, hidden_c, kernel_size=3, stride=1, padding=1),
-                nn.MaxPool2d(self.pool_size[i]) if self.pool_type.lower() == "max" else nn.AvgPool2d(self.pool_size[i]),
-                snn.Delta_Leaky(
-                    beta=self.beta,
-                    spike_grad=self.spike_grad,
-                    init_hidden=True,
-                    delta_threshold=self.delta_threshold,
-                    learnable_delta_threshold=self.learnable_delta_threshold
-                )
-            ]
-            if self.is_bn:
-                modules.append(nn.BatchNorm2d(hidden_c))
-            if self.dropout > 0:
-                modules.append(nn.Dropout2d(self.dropout))
-            in_c = hidden_c
-            in_size = in_size // self.pool_size[i]
-        
-        # Calculate final conv output size
-        final_size = in_size * in_size * self.hiddens[-1]
-        
-        # Linear Layers
-        modules += [
-            nn.Flatten(),
-            nn.Linear(final_size, self.linear_hidden),
-            snn.Delta_Leaky(
-                beta=self.beta,
-                spike_grad=self.spike_grad,
-                init_hidden=True,
-                delta_threshold=self.delta_threshold,
-                learnable_delta_threshold=self.learnable_delta_threshold
-            ),
-            nn.Linear(self.linear_hidden, self.out_size),
-            snn.Delta_Leaky(
-                beta=self.beta,
-                spike_grad=self.spike_grad,
-                init_hidden=True,
-                output=True,
-                delta_threshold=self.delta_threshold,
-                learnable_delta_threshold=self.learnable_delta_threshold
-            )
-        ]
-        
-        self.model = nn.Sequential(*modules)
-        
+#===================================

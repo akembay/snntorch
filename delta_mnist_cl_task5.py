@@ -27,7 +27,7 @@ def set_seed(seed):
     
     
 from delta_src.utils import load_yaml, save_dict2json
-from delta_src.model import LeakySNNMNIST, DeltaSNN
+from delta_src.model import NormalSNN, DeltaSNN
 
 def split_mnist(train_x, train_y, test_x, test_y, n_splits=5):
     """ Given the training set, split the tensors by the class label. """
@@ -67,8 +67,9 @@ class SubsetMNIST(torch.utils.data.Dataset):
 
 
 def train_task(model, train_loader, seen_test_loaders, criterion, optim, device, task_id, epoch, resultpath, model_conf):
-    """Train the model on current task and evaluate on all previously seen tasks"""
+    """Unified training function that works for both normal SNN and DeltaSNN models"""
     result = []
+    is_delta = isinstance(model, DeltaSNN)
     
     for e in range(epoch):
         model.train()
@@ -83,15 +84,28 @@ def train_task(model, train_loader, seen_test_loaders, criterion, optim, device,
             
             optim.zero_grad()
             spk_rec = []
-            mem1 = model.lif1.init_leaky()
-            mem2 = model.lif2.init_leaky()
+            
+            # Initialize or reset states based on model type
+            if is_delta:
+                model.lif1.reset_hidden()
+                model.lif2.reset_hidden()
+            else:
+                mem1 = model.lif1.init_leaky()
+                mem2 = model.lif2.init_leaky()
             
             # Forward pass over time steps
             for step in range(model.num_steps):
                 cur1 = model.fc1(inputs[step])
-                spk1, mem1 = model.lif1(cur1, mem1)
-                cur2 = model.fc2(spk1)
-                spk2, mem2 = model.lif2(cur2, mem2)
+                
+                if is_delta:
+                    spk1 = model.lif1(cur1)
+                    cur2 = model.fc2(spk1)
+                    spk2 = model.lif2(cur2)
+                else:
+                    spk1, mem1 = model.lif1(cur1, mem1)
+                    cur2 = model.fc2(spk1)
+                    spk2, mem2 = model.lif2(cur2, mem2)
+                
                 spk_rec.append(spk2)
             
             spk_rec = torch.stack(spk_rec)
@@ -99,6 +113,10 @@ def train_task(model, train_loader, seen_test_loaders, criterion, optim, device,
             
             loss.backward()
             optim.step()
+            
+            # Apply gradient clipping for DeltaSNN
+            if is_delta:
+                model.clip_gradients()
             
             train_loss_list.append(loss.item())
             train_acc = SF.accuracy_rate(spk_rec, targets)
@@ -122,14 +140,28 @@ def train_task(model, train_loader, seen_test_loaders, criterion, optim, device,
                     targets = targets.to(device)
                     
                     spk_rec = []
-                    mem1 = model.lif1.init_leaky()
-                    mem2 = model.lif2.init_leaky()
                     
+                    # Initialize or reset states based on model type
+                    if is_delta:
+                        model.lif1.reset_hidden()
+                        model.lif2.reset_hidden()
+                    else:
+                        mem1 = model.lif1.init_leaky()
+                        mem2 = model.lif2.init_leaky()
+                    
+                    # Forward pass over time steps
                     for step in range(model.num_steps):
                         cur1 = model.fc1(inputs[step])
-                        spk1, mem1 = model.lif1(cur1, mem1)
-                        cur2 = model.fc2(spk1)
-                        spk2, mem2 = model.lif2(cur2, mem2)
+                        
+                        if model_conf["type"]=="deltasnn".casefold():
+                            spk1 = model.lif1(cur1)
+                            cur2 = model.fc2(spk1)
+                            spk2 = model.lif2(cur2)
+                        else:
+                            spk1, mem1 = model.lif1(cur1, mem1)
+                            cur2 = model.fc2(spk1)
+                            spk2, mem2 = model.lif2(cur2, mem2)
+                        
                         spk_rec.append(spk2)
                     
                     spk_rec = torch.stack(spk_rec)
@@ -149,12 +181,9 @@ def train_task(model, train_loader, seen_test_loaders, criterion, optim, device,
         print(f"\nTask {task_id}, Epoch {e+1}/{epoch}:")
         print(f"Train Acc: {np.mean(train_acc_list):.4f}")
         for t in range(len(seen_test_loaders)):
-            print(f"Task {t+1} Acc: {task_accuracies[t]:.4f} ± {task_stds[t]:.4f}") #you can also save these results into .yaml file
+            print(f"Task {t+1} Acc: {task_accuracies[t]:.4f} ± {task_stds[t]:.4f}")
         
     return model, result
-
-
-
 
 def plot_accuracy_per_task(all_results, resultpath):
     """Plot accuracy curves for all tasks"""
@@ -264,7 +293,7 @@ def main():
     
     #>> Preparing the model >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     if model_conf["type"]=="snn".casefold():
-        model=LeakySNNMNIST(model_conf).to(device)
+        model=NormalSNN(model_conf).to(device)
         criterion=SF.ce_rate_loss() 
     elif model_conf["type"]=="deltasnn".casefold():
         model = DeltaSNN(model_conf).to(device)
